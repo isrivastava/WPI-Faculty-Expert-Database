@@ -1,0 +1,439 @@
+<?php
+/**
+ * @file
+ * Code for the WPI Faculty feature.
+ */
+
+include_once 'wpi_faculty.features.inc';
+
+function wpi_faculty_views_query_alter(&$view, &$query) {
+  if ($view->current_display == 'faculty_expert_database') {
+    $search = $query->where[1]['conditions'][1]['value'][':views_combine'];
+    $search = preg_replace('/[^A-Za-z0-9\-]/', ' ', $search);
+    $search = preg_replace('/\s+/', ' ', trim($search));
+
+    $vocabulary = taxonomy_vocabulary_machine_name_load('faculty_expert_areas');
+    $areas_of_expertise = [];
+
+    foreach (taxonomy_get_tree($vocabulary->vid) as $key => $value) {
+      $term_details = taxonomy_term_load($value->tid);
+      $areas_of_expertise[$value->tid] = $term_details->name;
+      $areas_of_expertise[$value->tid] .= ' ' . $term_details->field_expertise_definition[LANGUAGE_NONE][0]['safe_value'];
+    }
+
+    foreach ($areas_of_expertise as $key => $value) {
+      if (strpos(strtolower($value), strtolower($search)) > -1) {
+        $query->where[1]['conditions'][1]['value'][':views_combine'] = '%' . $key . '%';
+      }
+    }
+
+  }
+}
+
+/**
+ * Implements template_preprocess_views_view_summary_unformatted().
+ */
+function wpi_faculty_preprocess_views_view_summary_unformatted(&$vars) {
+  if ($vars['view']->name == 'faculty' && ($vars['view']->current_display == 'attachment_1')) {
+
+    // Maintain a list of all letters in alphabet so a full list can be made.
+    $letters = range('a', 'z');
+
+    // Maintain a set of query params to determine which items should be linked.
+    $params = drupal_get_query_parameters();
+    $contains = isset($params['search']) ? $params['search'] : '';
+    $starts_with = isset($params['startsWith']) ? $params['startsWith'] : '';
+
+    // List of all options for the template.
+    $vars['list'] = array();
+
+    // Check if the number numeric (#) filter should be a link or not.
+    $num_filtered = array_filter($vars['rows'], function ($item) {
+      $numbers = range(0, 9);
+      return array_search($item->link, $numbers);
+    });
+    $num_filter_regex = '^0|^1|^2|^3|^4|^5|^6|^7|^8|^9';
+    $class = ($starts_with == $num_filter_regex) ? 'active-filter' : '';
+    if ($num_filtered) {
+      $vars['list'][] = l(t('#'), current_path(), array('query' => array('startsWith' => $num_filter_regex), 'attributes' => array('class' => array($class))));
+    }
+
+    // Loop through each letter and link if there are results that start with
+    // the current letter.
+    $letters = array_flip($letters);
+    foreach ($letters as $key => $val) {
+      $letters[$key] = 0;
+    }
+    foreach ($vars['rows'] as $row) {
+      $link = strtolower($row->link);
+      if (isset($letters[strtolower($row->link)])) {
+        $letters[$link] = $row->link;
+      }
+    }
+    foreach ($letters as $key => $isset) {
+      $starts_with_param = '^' . $key;
+      $class = ($starts_with_param == $starts_with) ? 'active-filter' : '';
+      if ($isset) {
+        $params = array(
+          'query' => array(
+            'startsWith' => $starts_with_param,
+            'search' => $contains,
+          ),
+          'attributes' => array('class' => array($class)),
+
+        );
+        $vars['list'][] = l(strtoupper($isset), current_path(), $params);
+      }
+      else {
+        $letter = strtoupper($key);
+        $vars['list'][] = "<span class='$class'>$letter</span>";
+      }
+    }
+  }
+}
+
+/**
+ * Adds a Department drop-down filter above the Faculty Directory content pane.
+ *
+ * This is a hack until there's a real reference from User->Department.
+ * Implements hook_form_views_exposed_form_alter().
+ */
+function wpi_faculty_form_views_exposed_form_alter(&$form, &$form_state) {
+  $field_name = 'field_department';
+
+  if ($form['#id'] == 'views-exposed-form-faculty-panel-pane-1' && isset($form[$field_name . '_value'])) {
+
+    // Query for all published Departments.
+    $query = new EntityFieldQuery();
+    $query->entityCondition('entity_type', 'node')
+          ->entityCondition('bundle', array(
+            'department',
+            'office',
+            'landing_page',
+          ))
+          ->propertyCondition('status', NODE_PUBLISHED)
+          ->propertyOrderBy('title', 'ASC');
+    $result = $query->execute();
+
+    if (isset($result['node'])) {
+      $departmend_nids = array_keys($result['node']);
+      $departments = entity_load('node', $departmend_nids);
+    }
+
+    // Add a default so the filter is optional.
+    $options = array('' => 'All');
+
+    // Buld the options array based on the results, overwriting any duplicates.
+    foreach ($departments as $department) {
+      $options[$department->title] = $department->title;
+    }
+
+    // Alter the field.
+    $form[$field_name . '_value']['#type'] = 'select';
+    $form[$field_name . '_value']['#options'] = $options;
+    $form[$field_name . '_value']['#size'] = 1;
+  }
+
+  // Add placeholder text.
+  if ($form['#id'] == 'views-exposed-form-faculty-panel-pane-1') {
+    $form['search']['#attributes']['placeholder'][] = 'Search by name, title or department';
+  }
+
+  if($form['#id'] == 'views-exposed-form-faculty-faculty-expert-database') {
+    $form['search']['#attributes']['placeholder'][] = 'Search by name, title, department or expertise';
+    $form['#action'] = '/' . current_path();
+  }
+
+}
+
+/**
+ * Link the department name to the Department page.
+ *
+ * This is a hack until there's a real reference from User->Department.
+ * Implements hook_views_pre_render().
+ */
+function wpi_faculty_views_pre_render(&$view) {
+  if ($view->name == 'faculty') {
+    if ($view->current_display == 'panel_pane_1') {
+      // Query for all department names.
+      $department_nids = array();
+      $query = new EntityFieldQuery();
+      $query->entityCondition('entity_type', 'node')
+            ->entityCondition('bundle', array(
+              'department',
+              'office',
+              'landing_page',
+            ))
+            ->propertyCondition('status', NODE_PUBLISHED);
+      $results = $query->execute();
+      if (isset($results['node'])) {
+        $department_ids = array_keys($results['node']);
+        $department_nodes = entity_load('node', $department_ids);
+        foreach ($department_nodes as $nid => $d) {
+          $department_nids[$d->title] = $nid;
+        }
+      }
+
+      $used_uids = array();
+      foreach ($view->result as $k => $r) {
+
+        // Remove duplicates.
+        if (in_array($r->uid, $used_uids)) {
+          unset($view->result[$k]);
+          continue;
+        }
+        $used_uids[] = $r->uid;
+
+        // Link to an existing department node.
+        if (isset($r->field_field_department[0])) {
+          $department_name = $r->field_field_department[0]['raw']['value'];
+          if (isset($department_nids[$department_name])) {
+            $node_url = url('node/' . $department_nids[$department_name]);
+            $view->result[$k]->field_field_department[0]['rendered']['#markup'] = '<a href="' . $node_url . '">' . $department_name . '</a>';
+          }
+        }
+
+      }
+    }
+
+    if ($view->current_display == 'faculty_expert_database') {
+      foreach ($view->result as $k => $r) {
+        $view = [''];
+      }
+    }
+  }
+}
+
+function wpi_faculty_preprocess_views_view_table(&$vars) {
+  if ($vars['view']->current_display == 'faculty_expert_database') {
+
+    // Query all department to use later for creating links in the FED view
+    $vocabulary = taxonomy_vocabulary_machine_name_load('faculty_expert_areas');
+    $terms = entity_load('taxonomy_term', FALSE, array('vid' => $vocabulary->vid));
+
+    $query = new EntityFieldQuery();
+    $query->entityCondition('entity_type', 'node')
+          ->entityCondition('bundle', array('department'))
+          ->propertyCondition('status', NODE_PUBLISHED);
+    $results = $query->execute();
+
+    if (isset($results['node'])) {
+      $department_ids = array_keys($results['node']);
+      $department_nodes = entity_load('node', $department_ids);
+      foreach ($department_nodes as $nid => $d) {
+        $d_title = htmlspecialchars($d->title);
+        $department_nids[$d_title] = $nid;
+      }
+    }
+
+    foreach($terms as $key => $term) {
+      $terms[$key] = $term->name;
+    }
+
+    $path = drupal_lookup_path('alias', current_path());
+    foreach ($vars['rows'] as $key => $row) {
+      $dom = new DOMDocument;
+      $dom->loadHTML($row['field_email']);
+
+      $expert_uid = '';
+      foreach ($dom->getElementsByTagName('a') as $node) {
+        $href = $node->getAttribute( 'href' );
+        if (strpos($href, 'user/') === 1) {
+          $expert_uid = substr($href, 6);
+        }
+        $link = $node;
+        $link->setAttribute('target', '_blank');
+        $node->parentNode->replaceChild($link, $node);
+      }
+
+      foreach ($dom->getElementsByTagName('span') as $node) {
+        if ($node->getAttribute( 'class' ) == 'fed-title') {
+          $faculty_title = $node->nodeValue;
+        }
+        if ($node->getAttribute( 'class' ) == 'fed-department') {
+          $faculty_department = htmlspecialchars($node->nodeValue);
+          if (isset($department_nids[$faculty_department])) {
+            $node->nodeValue = '';
+            $link = $dom->createElement('a');
+            $link->setAttribute('href', '/node/' . $department_nids[$faculty_department]);
+            $link->setAttribute('target', '_blank');
+            $link->nodeValue = $faculty_department;
+            $newNode = $node;
+            $newNode->appendChild($link);
+            $node->parentNode->replaceChild($newNode, $node);
+          }
+        }
+        if ($node->getAttribute( 'class' ) == 'fed-name') {
+          $faculty_name = $node->nodeValue;
+        }
+      }
+
+      // Get image path and store as param to Contact Button. We'll pass it on to the
+      // webform to give context.
+      $profile_image = new DOMDocument();
+      $profile_image->loadHTML($row['field_image']);
+      foreach ($profile_image->getElementsByTagName('img') as $node) {
+        $profile_image_src = $node->getAttribute( 'src' );
+      }
+
+      $vars['rows'][$key]['field_email'] = $dom->saveHTML();
+
+      if(!empty($profile_image_src)) {
+        $vars['rows'][$key]['field_email'] .= l(t('Contact'), '/webforms/contact-our-experts', 
+          array(
+            'query' => array(
+              'image' => $profile_image_src,
+              'name' => $faculty_name,
+              'title' => $faculty_title,
+              'department' => $faculty_department,
+            ),
+            'attributes' => array(
+              'class' => array('button red fed-contact-button'),
+              'target' => '_blank'
+            )
+          )   
+        );
+      }
+
+      $query_in_the_news = new EntityFieldQuery();
+      $query_in_the_news->entityCondition('entity_type', 'node')
+        ->entityCondition('bundle', 'in_the_news')
+        ->fieldCondition('field_add_a_poi', 'target_id', $expert_uid)
+        ->propertyCondition('status', NODE_PUBLISHED);
+      $in_the_news_nids = $query_in_the_news->execute();
+      $in_the_news_nids = !empty($in_the_news_nids['node']) ? $in_the_news_nids['node'] : NULL;
+
+      $query_news = new EntityFieldQuery();
+      $query_news->entityCondition('entity_type', 'node')
+        ->entityCondition('bundle', 'news')
+        ->fieldCondition('field_add_a_person_of_interest_a', 'target_id', $expert_uid)
+        ->propertyCondition('status', NODE_PUBLISHED);
+      $news_nids = $query_news->execute();
+      $news_nids = !empty($news_nids['node']) ? $news_nids['node'] : NULL;
+
+      $news_array = [];
+      $vars['rows'][$key]['news_count'] = count($news_nids);
+      if (!empty($news_nids) && is_array($news_nids)) {
+        $count = 0;
+        foreach ($news_nids as $nid => $result) {
+          $count++;
+          if ($count > 5){
+
+          $vars['rows'][$key]['view_all'] .= l(t('View All @button_count Articles', array('@button_count' => count($news_nids))), '/news/latest', 
+            array(
+              'query' => array(
+                'person_of_interest' => $expert_uid,
+              ),
+              'attributes' => array(
+                'class' => array('button fed-view-all'),
+                'target' => '_blank'
+              )
+            )   
+          );
+          break;
+          }
+          array_push($news_array, _get_article_data($nid, 'news'));
+        }
+
+        usort($news_array, '_sort_by_date');
+
+        $news_output = _build_article_links($news_array);
+        $vars['header']['title_field'] = 'Related WPI Stories';
+        $vars['rows'][$key]['title_field'] = $news_output;
+      }
+
+      $in_the_news_array = [];
+      $vars['rows'][$key]['in_the_news_count'] = count($in_the_news_nids);
+      if (!empty($in_the_news_nids) && is_array($in_the_news_nids)) {
+        $count = 0;
+        foreach ($in_the_news_nids as $nid => $result) {
+          $count++;
+          if ($count > 5){
+            $vars['rows'][$key]['view_all_news'] .= l(t('View All @button_count Articles', array('@button_count' => count($in_the_news_nids))), '/news/in-the-news', 
+              array(
+                'query' => array(
+                  'person_of_interest' => $expert_uid,
+                ),
+                'attributes' => array(
+                  'class' => array('button fed-view-all'),
+                  'target' => '_blank'
+                )
+              )   
+            ); 
+            break;
+          }
+          array_push($in_the_news_array, _get_article_data($nid, 'in_the_news'));
+        }
+
+        usort($in_the_news_array, '_sort_by_date');
+        
+        $in_the_news_output = _build_article_links($in_the_news_array);
+        $vars['header']['field_link'] = 'In the News';
+        $vars['rows'][$key]['field_link'] = $in_the_news_output;
+      }
+
+      $expert_areas = explode(',', $row['field_expert_areas']);
+      foreach($expert_areas as $k => $expert_area) {
+        $tid = array_search($expert_area, $terms);
+        $link = l(t($expert_area), $path, 
+          array(
+            'query' => array(
+              'field_expert_areas_tid' => $tid
+            ),
+            'attributes' => array(
+              'class' => array('expert-area-link')
+            )
+          )
+        );
+        $expert_areas[$k] = $link;
+      }
+      $vars['rows'][$key]['field_expert_areas'] = implode(' | ',$expert_areas);
+    }
+  } 
+}
+
+function _get_article_data($nid, $type) {
+  $node = node_load($nid);
+  $article = [];
+  $article['type'] = str_replace('_', '-', $type);
+  $article['title'] = $node->title;
+  $article['image'] = $node->field_image[LANGUAGE_NONE][0];
+
+  if ($type == 'in_the_news') {
+    $publication = taxonomy_term_load($node->field_publications[LANGUAGE_NONE][0]['tid']);
+    $article['publication_name'] = $publication->name;
+    $article['url'] = $node->field_link[LANGUAGE_NONE][0]['url'];
+  } else {
+    $article['url'] = 'node/' . $nid;
+  }
+
+  return $article;
+}
+
+function _sort_by_date($a, $b, $order = 'desc') {
+  $t1 = strtotime($a['datetime']);
+  $t2 = strtotime($b['datetime']);
+  if($order == 'desc') {
+    return $t2 - $t1;
+  }
+  return $t2 - $t1;
+}
+
+function _build_article_links($articles){
+  $output = '';
+  foreach ($articles as $key => $article) {
+    $output .= '<div class="fed-related-article">';
+    $output .= l(t($article['title']), $article['url'], array('attributes' => array(
+      'class' => array('related-' . $article['type'] . '-article'),
+      'target' => '_blank')));
+    if (!empty($article['publication_name'])){
+      $output .= '<span class="fed-article-publication-name"> | <em>'. $article['publication_name'] . '</em></span>';
+    }
+    $output .= '</div>';
+  }
+  return $output;
+}
+
+function clean($string) {
+   return preg_replace('/[^A-Za-z0-9\-]/', ' ', $string); // Removes special chars.
+}

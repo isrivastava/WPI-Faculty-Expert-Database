@@ -1,0 +1,116 @@
+.view-faculty {
+  &.view-display-id-faculty_expert_database {
+    @extend .column-gutter;
+
+    #edit-field-expert-areas-tid-wrapper {
+      display: none;
+    }
+
+    #edit-search-wrapper {
+      @include grid-column(8);
+      @include grid-column-position(1);
+      padding: 0;
+      @include breakpoint(medium) {
+        @include grid-column(6);
+        @include grid-column-position(2);
+      }
+    }
+
+    #edit-search {
+      margin-bottom: 0;
+      padding-top: 10px;
+      padding-bottom: 10px;
+      height: auto;
+    }
+
+    .form-item-search {
+      &:before {
+        content: none;
+      }
+    }
+
+    .views-exposed-widgets.clearfix {
+      padding: 3rem 1.5rem;
+      background-color: $gallery;
+
+      .views-submit-button {
+        @include grid-column(3, $gutters: 0);
+        @include grid-column-position(1);
+        padding-top: 0;
+        @include breakpoint(medium) {
+          @include grid-column(2, $gutters: 0);
+          @include grid-column-position(2);
+        }
+
+        input {
+          width: 100%;
+          cursor: pointer;
+          padding: 12px 0 9px;
+          text-align: center;
+        }
+      }
+    }
+
+    .member-information-container {
+      margin-left: 1px;
+      margin-right: 0;
+    }
+  } 
+}
+
+.fed-name {
+  @extend %name;
+}
+
+.fed-contact-button {
+  @include breakpoint(small only) {
+    margin-top: 10px;
+  } 
+  @include breakpoint(medium) {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+  }
+}
+
+.fed-contact-info,
+.fed-expert-areas {
+  @include breakpoint(medium) {
+    width: calc(100% - 160px); // 160px is the width of the image.
+  }
+}
+
+.fed-contact-info {
+  position: relative;
+}
+
+.fed-expert-areas {
+  margin-top: 10px;
+  @include breakpoint(small only) {
+    padding: 0;
+  }
+}
+
+.fed-header {
+  font-weight: bold;
+}
+
+.fed-view-all {
+  margin-top: 10px;
+}
+
+.fed-related-article {
+  position: relative;
+  margin-left: 10px;
+
+  &:before {
+    position: absolute;
+    content: '\2022';
+    left: -10px;
+  }
+}
+
+.fed-article-publication-name {
+  padding-left: 3px;
+  color: $charcoal;
+}
